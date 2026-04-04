@@ -1,0 +1,29 @@
+# Environment files containing secrets
+.env
+
+# Python virtual environment
+ui/
+venv/
+ENV/
+
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# VS Code / IDE files
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
