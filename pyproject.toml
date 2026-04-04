@@ -7,15 +7,18 @@ authors = [
 ]
 readme = "README.md"
 requires-python = ">=3.13,<4.0"
-license = { text = "MIT" }
+license = "MIT"
 dependencies = [
     "requests>=2.32.4",
     "python-dotenv>=1.2.2"
 ]
 
 [project.scripts]
-nimui = "main:main"
+nimui = "nimui.cli:main"
 
 [build-system]
-requires = ["setuptools>=65.0.0"]
+requires = ["setuptools>=77.0.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["nimui*"]
