@@ -4,17 +4,20 @@ import argparse
 import requests
 from dotenv import load_dotenv
 
-from nimui.model_manager import get_current_model, set_model, list_models
+from nimui.model_manager import get_current_model, set_model, list_models, search_models
 
 
 def handle_model_cmd(args):
     """Handle `chat model` subcommand."""
-    if args.list:
-        list_models()
+    if args.list is not None:
+        # --list was passed, could be empty string (no group) or a group name
+        group = args.list if args.list else None
+        list_models(group)
+    elif args.search:
+        search_models(args.search)
     elif args.switch:
         set_model(args.switch)
     else:
-        # just show current model
         current = get_current_model()
         print(f"Current model: {current}")
 
@@ -72,8 +75,13 @@ def main():
             help="Switch to a different model"
         )
         model_parser.add_argument(
-            "--list", "-l", action="store_true",
-            help="List all available models"
+            "--list", "-l", nargs="?", const="", default=None,
+            metavar="GROUP",
+            help="List model groups, or models in a specific group"
+        )
+        model_parser.add_argument(
+            "--search", metavar="TERM",
+            help="Search for models by name"
         )
         args = model_parser.parse_args(sys.argv[2:])
         handle_model_cmd(args)
