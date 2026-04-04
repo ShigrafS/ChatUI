@@ -9,7 +9,8 @@ Interaction with the active model and general usage.
 | Command | Description |
 |---|---|
 | `chat "How are you?"` | Sends a direct text prompt to the active model. |
-| `chat -f / --file prompt.txt` | Reads the prompt content from a file and sends it. |
+| `chat -f file.txt` | Reads a file and uses its content as the prompt. |
+| `chat -f f1.txt -f f2.txt "Summarize"` | Combines multiple files with a text prompt for context. |
 | `chat` | Enters interactive mode (stdin) if no prompt is provided. |
 
 ## Model Management

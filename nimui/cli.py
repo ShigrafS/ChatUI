@@ -33,15 +33,28 @@ def handle_prompt_cmd(args):
 
     MODEL = get_current_model()
 
+    parts = []
+
+    # load file(s) if provided
     if args.file:
-        with open(args.file, "r", encoding="utf-8") as f:
-            prompt = f.read()
-    elif args.prompt:
-        prompt = args.prompt
-    else:
+        for fpath in args.file:
+            if not os.path.exists(fpath):
+                print(f"Error: File not found: {fpath}")
+                sys.exit(1)
+            with open(fpath, "r", encoding="utf-8") as f:
+                fname = os.path.basename(fpath)
+                parts.append(f"--- FILE: {fname} ---\n{f.read()}")
+
+    # append text prompt if given
+    if args.prompt:
+        parts.append(args.prompt)
+
+    if not parts:
         # fallback to stdin
         print("Enter your prompt (Ctrl+Z then Enter to end):")
-        prompt = sys.stdin.read()
+        parts.append(sys.stdin.read())
+
+    prompt = "\n\n".join(parts)
 
     url = "https://integrate.api.nvidia.com/v1/chat/completions"
     payload = {
@@ -122,7 +135,7 @@ def main():
             description="NimUI — chat with NVIDIA API models."
         )
         prompt_parser.add_argument("prompt", nargs="?", help="Prompt text for the AI")
-        prompt_parser.add_argument("--file", "-f", help="Read prompt from a file")
+        prompt_parser.add_argument("--file", "-f", action="append", help="File(s) to include as context (can use multiple times)")
         args = prompt_parser.parse_args()
         handle_prompt_cmd(args)
 
