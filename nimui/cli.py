@@ -14,7 +14,7 @@ def main():
     MODEL = "meta/llama-3.1-70b-instruct"
 
     if len(sys.argv) < 2:
-        print("Usage: nimui <prompt>")
+        print("Usage: chat <prompt>")
         sys.exit(1)
 
     prompt = " ".join(sys.argv[1:])

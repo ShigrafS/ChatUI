@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-nimui = "nimui.cli:main"
+chat = "nimui.cli:main"
 
 [build-system]
 requires = ["setuptools>=77.0.0"]
