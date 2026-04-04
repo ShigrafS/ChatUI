@@ -1,6 +1,6 @@
-# main.py
 import os
 import sys
+import argparse
 import requests
 from dotenv import load_dotenv
 
@@ -13,18 +13,27 @@ def main():
 
     MODEL = "meta/llama-3.1-70b-instruct"
 
-    if len(sys.argv) < 2:
-        print("Usage: chat <prompt>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Ask NVIDIA API a question.")
+    parser.add_argument("prompt", nargs="?", help="Prompt text for the AI")
+    parser.add_argument("--file", "-f", help="Read prompt from a file")
 
-    prompt = " ".join(sys.argv[1:])
+    args = parser.parse_args()
+
+    if args.file:
+        with open(args.file, "r", encoding="utf-8") as f:
+            prompt = f.read()
+    elif args.prompt:
+        prompt = args.prompt
+    else:
+        # fallback to stdin
+        print("Enter your prompt (Ctrl+Z then Enter to end):")
+        prompt = sys.stdin.read()
 
     url = "https://integrate.api.nvidia.com/v1/chat/completions"
     payload = {
         "model": MODEL,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.2,
-        "max_tokens": 500
+        "temperature": 0.2
     }
     headers = {
         "Authorization": f"Bearer {API_KEY}",
