@@ -1,6 +1,6 @@
 # NimUI CLI Guide
 
-NimUI is a command-line interface for interacting with NVIDIA's hosted LLM models.
+NimUI is a command-line interface for interacting with NVIDIA's hosted LLM models, now featuring **real-time streaming** for immediate feedback during chat.
 
 ## Basic Chat
 
