@@ -30,6 +30,26 @@ Commands for switching and exploring the 199+ available models.
 
 Your preferences are stored locally at:
 - **Windows**: `%USERPROFILE%\.nimui\config.json`
-- **Linux/macOS**: `~/.nimui/config.json`
-
-The **default model** is `meta/llama-3.1-70b-instruct`.
+  - **Linux/macOS**: `~/.nimui/config.json`
+  
+  The **default model** is `meta/llama-3.1-70b-instruct`.
+  
+  ---
+  
+  ## Custom Aliases
+  
+  You can create your own command names to invoke NimUI. This is useful for short names (e.g. `n`) or handling frequent typos (e.g. `caht`).
+  
+  | Command | Description |
+  |---|---|
+  | `chat --alias <name>` | Registers `<name>` as a command. |
+  
+  Once registered, the alias works exactly like `chat`. To ensure these aliases work globally regardless of your active environment, you should add the following directory to your system's **PATH**:
+  - **Windows**: `%USERPROFILE%\.nimui\scripts`
+  - **Linux/macOS**: `~/.nimui/bin`
+  
+  Example usage after setup:
+  ```bash
+  chat --alias ai
+  ai "Hello"
+  ```

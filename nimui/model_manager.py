@@ -74,6 +74,34 @@ def set_model(model_name):
     print(f"Switched to: {model_name}")
 
 
+def get_config_dir():
+    """Expose the neutral configuration directory."""
+    return _CONFIG_DIR
+
+
+def get_aliases():
+    """Retrieve all custom aliases from config."""
+    cfg = _load_config()
+    return cfg.get("aliases", [])
+
+
+def add_alias(name):
+    """Add a new CLI alias to the config, avoiding duplicates."""
+    cfg = _load_config()
+    aliases = cfg.get("aliases", [])
+    
+    if name not in aliases:
+        # avoid adding the base 'chat' as an alias if somehow attempted
+        if name == "chat":
+            return False
+            
+        aliases.append(name)
+        cfg["aliases"] = aliases
+        _save_config(cfg)
+        return True
+    return False
+
+
 def list_models(group=None):
     """List models by category or show categories overview."""
     registry = _load_registry()

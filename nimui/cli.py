@@ -5,7 +5,9 @@ import argparse
 import requests
 from dotenv import load_dotenv
 
-from nimui.model_manager import get_current_model, set_model, list_models, search_models
+import platform
+from pathlib import Path
+from nimui.model_manager import get_current_model, set_model, list_models, search_models, add_alias, get_config_dir
 
 
 def handle_model_cmd(args):
@@ -106,6 +108,52 @@ def handle_prompt_cmd(args):
         sys.exit(1)
 
 
+def handle_alias(alias_name):
+    """Handle adding a command alias in a neutral location."""
+    if not alias_name:
+        print("Error: Please provide a name for the alias (e.g. `chat --alias ai`)")
+        return
+
+    # 1. Update config
+    success = add_alias(alias_name)
+    if not success:
+        print(f"Alias '{alias_name}' already exists or is reserved.")
+        return
+
+    # 2. Determine neutral storage location
+    config_dir = get_config_dir()
+    if platform.system() == "Windows":
+        target_dir = config_dir / "scripts"
+        shim_name = f"{alias_name}.bat"
+        content = f"@echo off\nchat %*\n"
+    else:
+        target_dir = config_dir / "bin"
+        shim_name = alias_name
+        content = f'#!/bin/bash\nchat "$@"\n'
+
+    # 3. Create the directory and shim
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        shim_path = target_dir / shim_name
+        
+        with open(shim_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        
+        if platform.system() != "Windows":
+            os.chmod(shim_path, 0o755)
+
+        print(f"\nSuccessfully created alias '{alias_name}' at: {shim_path}")
+        print("-" * 50)
+        print("IMPORTANT: To use this alias globally, please add this folder to your PATH:")
+        print(f"  {target_dir}")
+        print("-" * 50)
+        print("Once added, restarts might be required for changes to take effect.")
+        
+    except Exception as e:
+        print(f"Warning: Failed to create shim at {target_dir}. Alias added to config.")
+        print(f"Error: {e}")
+
+
 def main():
     # peek at argv to decide which path we're on
     # can't use subparsers — they eat the first positional arg
@@ -136,8 +184,13 @@ def main():
         )
         prompt_parser.add_argument("prompt", nargs="?", help="Prompt text for the AI")
         prompt_parser.add_argument("--file", "-f", action="append", help="File(s) to include as context (can use multiple times)")
+        prompt_parser.add_argument("--alias", metavar="NAME", help="Create a custom command alias (e.g. `caht`, `ai`)")
         args = prompt_parser.parse_args()
-        handle_prompt_cmd(args)
+
+        if args.alias:
+            handle_alias(args.alias)
+        else:
+            handle_prompt_cmd(args)
 
 
 if __name__ == "__main__":
