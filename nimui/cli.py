@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 import platform
 from pathlib import Path
 from nimui.model_manager import get_current_model, set_model, list_models, search_models, add_alias, get_config_dir
+from nimui import chat_manager
 
 
 def handle_model_cmd(args):
@@ -34,6 +35,15 @@ def handle_prompt_cmd(args):
         sys.exit(1)
 
     MODEL = get_current_model()
+    
+    # 1. Get or create current chat
+    chat_id = chat_manager.get_current_chat_id()
+    if not chat_id:
+        chat_id = chat_manager.create_chat("Default Chat", MODEL)
+        print(f"Created new default chat session: {chat_id[:8]}")
+    
+    # 2. Get history
+    history = chat_manager.get_chat_history(chat_id)
 
     parts = []
 
@@ -58,10 +68,14 @@ def handle_prompt_cmd(args):
 
     prompt = "\n\n".join(parts)
 
+    # 3. Add prompt to state
+    chat_manager.add_message(chat_id, "user", prompt)
+    history.append({"role": "user", "content": prompt})
+
     url = "https://integrate.api.nvidia.com/v1/chat/completions"
     payload = {
         "model": MODEL,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": history,
         "temperature": 0.2,
         "stream": True  # Enable SSE streaming
     }
@@ -78,6 +92,7 @@ def handle_prompt_cmd(args):
             # Simple "Thinking..." indicator
             print("Thinking...", end="\r", flush=True)
             first_chunk = True
+            full_response = ""
             
             for line in response.iter_lines(decode_unicode=True):
                 if not line:
@@ -99,13 +114,88 @@ def handle_prompt_cmd(args):
                                 print(" " * 12, end="\r", flush=True)
                                 first_chunk = False
                             print(content, end="", flush=True)
+                            full_response += content
                 except json.JSONDecodeError:
                     # sometimes the API might send malformed chunk or partial
                     continue
             print() # newline at end
+            
+            # 4. Save response to history
+            if full_response:
+                chat_manager.add_message(chat_id, "assistant", full_response)
     except Exception as e:
         print(f"\nError connecting to API: {e}")
         sys.exit(1)
+
+
+def handle_chat_cmd(args):
+    if args.list is not None:
+        search_term = args.list if args.list else None
+        chats = chat_manager.list_chats(search=search_term)
+        current = chat_manager.get_current_chat_id()
+        
+        if not chats:
+            print("No chat sessions found.")
+            return
+            
+        print("\nYour Chat Sessions:\n")
+        for c in chats:
+            marker = " (active)" if c["id"] == current else ""
+            print(f"  [{c['id'][:8]}] {c['title']:<30} ({c['model']}){marker}")
+        print("\nUse `chat chat switch <id-or-title>` to change.\n")
+        
+    elif args.new:
+        chat_id = chat_manager.create_chat(args.new, get_current_model())
+        print(f"Started new chat: {args.new} ({chat_id[:8]})")
+        
+    elif args.switch:
+        matches = chat_manager.get_chat_by_partial(args.switch)
+        if not matches:
+            print(f"No chat found matching '{args.switch}'.")
+        elif len(matches) == 1:
+            chat_manager.set_current_chat(matches[0]["id"])
+            print(f"Switched to: {matches[0]['title']} ({matches[0]['id'][:8]})")
+        else:
+            print(f"Multiple matches found for '{args.switch}':")
+            for m in matches:
+                print(f"  - [{m['id'][:8]}] {m['title']}")
+            print("\nPlease use a more specific ID or title.")
+            
+    elif args.rename:
+        current = chat_manager.get_current_chat_id()
+        if not current:
+            print("Error: No active chat to rename.")
+            return
+        chat_manager.rename_chat(current, args.rename)
+        print(f"Chat renamed to: {args.rename}")
+        
+    elif args.delete:
+        # use same matching logic for delete
+        matches = chat_manager.get_chat_by_partial(args.delete)
+        if not matches:
+            print(f"No chat found matching '{args.delete}'.")
+        elif len(matches) == 1:
+            chat_manager.delete_chat(matches[0]["id"])
+            print(f"Deleted chat: {matches[0]['title']}")
+        else:
+            print(f"Multiple matches found for '{args.delete}':")
+            for m in matches:
+                print(f"  - [{m['id'][:8]}] {m['title']}")
+            print("\nPlease use a more specific ID or title to delete.")
+    
+    else:
+        # summary of current chat
+        current_id = chat_manager.get_current_chat_id()
+        if not current_id:
+            print("No active chat session. Send a prompt to start one.")
+        else:
+            # fetch its info
+            chats = chat_manager.list_chats()
+            current = next((c for c in chats if c["id"] == current_id), None)
+            if current:
+                print(f"Current Chat: {current['title']} ({current['id'][:8]})")
+            else:
+                print("Error: Active chat not found in storage.")
 
 
 def handle_alias(alias_name):
@@ -178,6 +268,19 @@ def main():
         )
         args = model_parser.parse_args(sys.argv[2:])
         handle_model_cmd(args)
+    elif len(sys.argv) > 1 and sys.argv[1] == "chat":
+        chat_parser = argparse.ArgumentParser(
+            prog="chat chat",
+            description="Manage your chat sessions and history."
+        )
+        chat_parser.add_argument("--new", "-n", metavar="TITLE", help="Start a new chat session")
+        chat_parser.add_argument("--list", "-l", nargs="?", const="", default=None, metavar="SEARCH", help="List or search chat sessions")
+        chat_parser.add_argument("--switch", "-s", metavar="ID_OR_TITLE", help="Switch active chat session")
+        chat_parser.add_argument("--rename", "-r", metavar="TITLE", help="Rename the current session")
+        chat_parser.add_argument("--delete", "-d", metavar="ID_OR_TITLE", help="Delete a chat session")
+        
+        args = chat_parser.parse_args(sys.argv[2:])
+        handle_chat_cmd(args)
     else:
         prompt_parser = argparse.ArgumentParser(
             description="NimUI — chat with NVIDIA API models."
