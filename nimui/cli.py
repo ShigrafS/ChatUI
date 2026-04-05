@@ -42,8 +42,10 @@ def handle_prompt_cmd(args):
         chat_id = chat_manager.create_chat("Default Chat", MODEL)
         print(f"Created new default chat session: {chat_id[:8]}")
     
-    # 2. Get history
+    # 2. Get history (cap at last 20 messages to protect context window)
     history = chat_manager.get_chat_history(chat_id)
+    if len(history) > 20:
+        history = history[-20:]
 
     parts = []
 
@@ -142,7 +144,7 @@ def handle_chat_cmd(args):
         for c in chats:
             marker = " (active)" if c["id"] == current else ""
             print(f"  [{c['id'][:8]}] {c['title']:<30} ({c['model']}){marker}")
-        print("\nUse `chat chat switch <id-or-title>` to change.\n")
+        print("\nUse `chat chat --switch <id-or-title>` to change.\n")
         
     elif args.new:
         chat_id = chat_manager.create_chat(args.new, get_current_model())
@@ -273,11 +275,12 @@ def main():
             prog="chat chat",
             description="Manage your chat sessions and history."
         )
-        chat_parser.add_argument("--new", "-n", metavar="TITLE", help="Start a new chat session")
-        chat_parser.add_argument("--list", "-l", nargs="?", const="", default=None, metavar="SEARCH", help="List or search chat sessions")
-        chat_parser.add_argument("--switch", "-s", metavar="ID_OR_TITLE", help="Switch active chat session")
-        chat_parser.add_argument("--rename", "-r", metavar="TITLE", help="Rename the current session")
-        chat_parser.add_argument("--delete", "-d", metavar="ID_OR_TITLE", help="Delete a chat session")
+        group = chat_parser.add_mutually_exclusive_group()
+        group.add_argument("--new", "-n", metavar="TITLE", help="Start a new chat session")
+        group.add_argument("--list", "-l", nargs="?", const="", default=None, metavar="SEARCH", help="List or search chat sessions")
+        group.add_argument("--switch", "-s", metavar="ID_OR_TITLE", help="Switch active chat session")
+        group.add_argument("--rename", "-r", metavar="TITLE", help="Rename the current session")
+        group.add_argument("--delete", "-d", metavar="ID_OR_TITLE", help="Delete a chat session")
         
         args = chat_parser.parse_args(sys.argv[2:])
         handle_chat_cmd(args)
