@@ -1,6 +1,5 @@
 import sqlite3
 import uuid
-import datetime
 from pathlib import Path
 from nimui.model_manager import get_config_dir, _load_config, _save_config
 
@@ -13,49 +12,48 @@ def _get_db_path():
 
 def _init_db():
     """Initialize SQLite database with chats and messages tables."""
-    conn = sqlite3.connect(_get_db_path())
-    cursor = conn.cursor()
-    
-    # Chats table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS chats (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            model TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    
-    # Messages table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (chat_id) REFERENCES chats (id) ON DELETE CASCADE
-        )
-    """)
-    
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(_get_db_path()) as conn:
+        cursor = conn.cursor()
+        
+        # Foreign Key enforcement
+        cursor.execute("PRAGMA foreign_keys = ON;")
+        
+        # Chats table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS chats (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                model TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Messages table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (chat_id) REFERENCES chats (id) ON DELETE CASCADE
+            )
+        """)
+        
+        conn.commit()
 
 def create_chat(title, model):
     """Create a new chat session."""
     _init_db()
     chat_id = str(uuid.uuid4())
-    conn = sqlite3.connect(_get_db_path())
-    cursor = conn.cursor()
-    
-    cursor.execute(
-        "INSERT INTO chats (id, title, model) VALUES (?, ?, ?)",
-        (chat_id, title, model)
-    )
-    
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(_get_db_path()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO chats (id, title, model) VALUES (?, ?, ?)",
+            (chat_id, title, model)
+        )
+        conn.commit()
     
     # Set as current chat
     set_current_chat(chat_id)
@@ -64,95 +62,82 @@ def create_chat(title, model):
 def list_chats(search=None):
     """List all chat sessions, optionally filtered by title."""
     _init_db()
-    conn = sqlite3.connect(_get_db_path())
-    cursor = conn.cursor()
-    
-    if search:
-        cursor.execute(
-            "SELECT id, title, model, updated_at FROM chats WHERE title LIKE ? ORDER BY updated_at DESC",
-            (f"%{search}%",)
-        )
-    else:
-        cursor.execute("SELECT id, title, model, updated_at FROM chats ORDER BY updated_at DESC")
-        
-    rows = cursor.fetchall()
-    conn.close()
-    
-    return [{"id": r[0], "title": r[1], "model": r[2], "updated_at": r[3]} for r in rows]
+    with sqlite3.connect(_get_db_path()) as conn:
+        cursor = conn.cursor()
+        if search:
+            cursor.execute(
+                "SELECT id, title, model, updated_at FROM chats WHERE title LIKE ? ORDER BY updated_at DESC",
+                (f"%{search}%",)
+            )
+        else:
+            cursor.execute("SELECT id, title, model, updated_at FROM chats ORDER BY updated_at DESC")
+            
+        rows = cursor.fetchall()
+        return [{"id": r[0], "title": r[1], "model": r[2], "updated_at": r[3]} for r in rows]
 
 def get_chat_history(chat_id):
     """Retrieve full message history for a chat session."""
     _init_db()
-    conn = sqlite3.connect(_get_db_path())
-    cursor = conn.cursor()
-    
-    cursor.execute(
-        "SELECT role, content FROM messages WHERE chat_id = ? ORDER BY timestamp ASC",
-        (chat_id,)
-    )
-    
-    rows = cursor.fetchall()
-    conn.close()
-    
-    return [{"role": r[0], "content": r[1]} for r in rows]
+    with sqlite3.connect(_get_db_path()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT role, content FROM messages WHERE chat_id = ? ORDER BY timestamp ASC, id ASC",
+            (chat_id,)
+        )
+        rows = cursor.fetchall()
+        return [{"role": r[0], "content": r[1]} for r in rows]
 
 def add_message(chat_id, role, content):
     """Add a message to a chat session and update its timestamp."""
     _init_db()
-    conn = sqlite3.connect(_get_db_path())
-    cursor = conn.cursor()
-    
-    # 1. Add message
-    cursor.execute(
-        "INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)",
-        (chat_id, role, content)
-    )
-    
-    # 2. Update chat timestamp
-    cursor.execute(
-        "UPDATE chats SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (chat_id,)
-    )
-    
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(_get_db_path()) as conn:
+        cursor = conn.cursor()
+        # 1. Add message
+        cursor.execute(
+            "INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)",
+            (chat_id, role, content)
+        )
+        # 2. Update chat timestamp
+        cursor.execute(
+            "UPDATE chats SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (chat_id,)
+        )
+        conn.commit()
 
 def delete_chat(chat_id):
     """Delete a chat session and its history."""
     _init_db()
-    conn = sqlite3.connect(_get_db_path())
-    cursor = conn.cursor()
-    
-    cursor.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
-    conn.commit()
+    with sqlite3.connect(_get_db_path()) as conn:
+        cursor = conn.cursor()
+        
+        # Enforce foreign keys to ensure CASCADE delete works
+        cursor.execute("PRAGMA foreign_keys = ON;")
+        cursor.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
+        conn.commit()
     
     # If the current chat was deleted, clear it or pick most recent
     cfg = _load_config()
     if cfg.get("current_chat_id") == chat_id:
-        # try to find most recent
-        cursor.execute("SELECT id FROM chats ORDER BY updated_at DESC LIMIT 1")
-        row = cursor.fetchone()
-        if row:
-            cfg["current_chat_id"] = row[0]
-        else:
-            del cfg["current_chat_id"]
-        _save_config(cfg)
-        
-    conn.close()
+        with sqlite3.connect(_get_db_path()) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM chats ORDER BY updated_at DESC LIMIT 1")
+            row = cursor.fetchone()
+            if row:
+                cfg["current_chat_id"] = row[0]
+            else:
+                del cfg["current_chat_id"]
+            _save_config(cfg)
 
 def rename_chat(chat_id, new_title):
     """Update title of a chat session."""
     _init_db()
-    conn = sqlite3.connect(_get_db_path())
-    cursor = conn.cursor()
-    
-    cursor.execute(
-        "UPDATE chats SET title = ? WHERE id = ?",
-        (new_title, chat_id)
-    )
-    
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(_get_db_path()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE chats SET title = ? WHERE id = ?",
+            (new_title, chat_id)
+        )
+        conn.commit()
 
 def get_current_chat_id():
     """Retrieve active chat ID from config."""
@@ -168,22 +153,19 @@ def set_current_chat(chat_id):
 def get_chat_by_partial(term):
     """Find a chat by partial ID or title match."""
     _init_db()
-    conn = sqlite3.connect(_get_db_path())
-    cursor = conn.cursor()
-    
-    # Try ID first (exact)
-    cursor.execute("SELECT id, title FROM chats WHERE id = ?", (term,))
-    row = cursor.fetchone()
-    if row:
-        conn.close()
-        return [{"id": row[0], "title": row[1]}]
+    with sqlite3.connect(_get_db_path()) as conn:
+        cursor = conn.cursor()
         
-    # Try title or ID partial match
-    cursor.execute(
-        "SELECT id, title FROM chats WHERE title LIKE ? OR id LIKE ? ORDER BY updated_at DESC",
-        (f"%{term}%", f"%{term}%")
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    
-    return [{"id": r[0], "title": r[1]} for r in rows]
+        # Try ID first (exact)
+        cursor.execute("SELECT id, title FROM chats WHERE id = ?", (term,))
+        row = cursor.fetchone()
+        if row:
+            return [{"id": row[0], "title": row[1]}]
+            
+        # Try title or ID partial match
+        cursor.execute(
+            "SELECT id, title FROM chats WHERE title LIKE ? OR id LIKE ? ORDER BY updated_at DESC",
+            (f"%{term}%", f"%{term}%")
+        )
+        rows = cursor.fetchall()
+        return [{"id": r[0], "title": r[1]} for r in rows]
