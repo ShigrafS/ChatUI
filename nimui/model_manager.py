@@ -18,7 +18,7 @@ def _load_registry():
         return json.load(f)
 
 
-def _load_config():
+def load_config():
     """Read user config, return empty dict if missing."""
     if _CONFIG_FILE.exists():
         with open(_CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -26,7 +26,7 @@ def _load_config():
     return {}
 
 
-def _save_config(cfg):
+def save_config(cfg):
     _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with open(_CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
@@ -42,7 +42,7 @@ def _all_models(registry):
 
 def get_current_model():
     """Return the active model — config override or default."""
-    cfg = _load_config()
+    cfg = load_config()
     if "current_model" in cfg:
         return cfg["current_model"]
     return _load_registry()["default"]
@@ -68,9 +68,9 @@ def set_model(model_name):
             print("Use `chat model --search <term>` to find models.")
             return
 
-    cfg = _load_config()
+    cfg = load_config()
     cfg["current_model"] = model_name
-    _save_config(cfg)
+    save_config(cfg)
     print(f"Switched to: {model_name}")
 
 
@@ -81,13 +81,13 @@ def get_config_dir():
 
 def get_aliases():
     """Retrieve all custom aliases from config."""
-    cfg = _load_config()
+    cfg = load_config()
     return cfg.get("aliases", [])
 
 
 def add_alias(name):
     """Add a new CLI alias to the config, avoiding duplicates."""
-    cfg = _load_config()
+    cfg = load_config()
     aliases = cfg.get("aliases", [])
     
     if name not in aliases:
@@ -97,7 +97,7 @@ def add_alias(name):
             
         aliases.append(name)
         cfg["aliases"] = aliases
-        _save_config(cfg)
+        save_config(cfg)
         return True
     return False
 
