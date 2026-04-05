@@ -1,7 +1,7 @@
 import sqlite3
 import uuid
 from pathlib import Path
-from nimui.model_manager import get_config_dir, _load_config, _save_config
+from nimui.model_manager import get_config_dir, load_config, save_config
 
 DB_NAME = "chats.db"
 
@@ -10,13 +10,16 @@ def _get_db_path():
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir / DB_NAME
 
+def _get_conn():
+    """Create a SQLite connection with foreign keys enabled."""
+    conn = sqlite3.connect(_get_db_path())
+    conn.execute("PRAGMA foreign_keys = ON;")
+    return conn
+
 def _init_db():
     """Initialize SQLite database with chats and messages tables."""
-    with sqlite3.connect(_get_db_path()) as conn:
+    with _get_conn() as conn:
         cursor = conn.cursor()
-        
-        # Foreign Key enforcement
-        cursor.execute("PRAGMA foreign_keys = ON;")
         
         # Chats table
         cursor.execute("""
@@ -47,7 +50,7 @@ def create_chat(title, model):
     """Create a new chat session."""
     _init_db()
     chat_id = str(uuid.uuid4())
-    with sqlite3.connect(_get_db_path()) as conn:
+    with _get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO chats (id, title, model) VALUES (?, ?, ?)",
@@ -62,7 +65,7 @@ def create_chat(title, model):
 def list_chats(search=None):
     """List all chat sessions, optionally filtered by title."""
     _init_db()
-    with sqlite3.connect(_get_db_path()) as conn:
+    with _get_conn() as conn:
         cursor = conn.cursor()
         if search:
             cursor.execute(
@@ -78,7 +81,7 @@ def list_chats(search=None):
 def get_chat_history(chat_id):
     """Retrieve full message history for a chat session."""
     _init_db()
-    with sqlite3.connect(_get_db_path()) as conn:
+    with _get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute(
             "SELECT role, content FROM messages WHERE chat_id = ? ORDER BY timestamp ASC, id ASC",
@@ -90,7 +93,7 @@ def get_chat_history(chat_id):
 def add_message(chat_id, role, content):
     """Add a message to a chat session and update its timestamp."""
     _init_db()
-    with sqlite3.connect(_get_db_path()) as conn:
+    with _get_conn() as conn:
         cursor = conn.cursor()
         # 1. Add message
         cursor.execute(
@@ -107,18 +110,15 @@ def add_message(chat_id, role, content):
 def delete_chat(chat_id):
     """Delete a chat session and its history."""
     _init_db()
-    with sqlite3.connect(_get_db_path()) as conn:
+    with _get_conn() as conn:
         cursor = conn.cursor()
-        
-        # Enforce foreign keys to ensure CASCADE delete works
-        cursor.execute("PRAGMA foreign_keys = ON;")
         cursor.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
         conn.commit()
     
     # If the current chat was deleted, clear it or pick most recent
-    cfg = _load_config()
+    cfg = load_config()
     if cfg.get("current_chat_id") == chat_id:
-        with sqlite3.connect(_get_db_path()) as conn:
+        with _get_conn() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT id FROM chats ORDER BY updated_at DESC LIMIT 1")
             row = cursor.fetchone()
@@ -126,12 +126,12 @@ def delete_chat(chat_id):
                 cfg["current_chat_id"] = row[0]
             else:
                 del cfg["current_chat_id"]
-            _save_config(cfg)
+            save_config(cfg)
 
 def rename_chat(chat_id, new_title):
     """Update title of a chat session."""
     _init_db()
-    with sqlite3.connect(_get_db_path()) as conn:
+    with _get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute(
             "UPDATE chats SET title = ? WHERE id = ?",
@@ -141,19 +141,19 @@ def rename_chat(chat_id, new_title):
 
 def get_current_chat_id():
     """Retrieve active chat ID from config."""
-    cfg = _load_config()
+    cfg = load_config()
     return cfg.get("current_chat_id")
 
 def set_current_chat(chat_id):
     """Update active chat ID in config."""
-    cfg = _load_config()
+    cfg = load_config()
     cfg["current_chat_id"] = chat_id
-    _save_config(cfg)
+    save_config(cfg)
 
 def get_chat_by_partial(term):
     """Find a chat by partial ID or title match."""
     _init_db()
-    with sqlite3.connect(_get_db_path()) as conn:
+    with _get_conn() as conn:
         cursor = conn.cursor()
         
         # Try ID first (exact)
