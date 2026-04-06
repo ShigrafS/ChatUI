@@ -1,32 +1,52 @@
 # NimUI CLI Guide
 
-NimUI is a command-line interface for interacting with NVIDIA's hosted LLM models, now featuring **real-time streaming** for immediate feedback during chat.
+NimUI is a powerful command-line interface for interacting with NVIDIA's hosted LLM models, featuring **real-time streaming** and **persistent chat history**.
 
 ## Basic Chat
 
-Interaction with the active model and general usage.
+Quickly interact with the active model. If no active chat session exists, NimUI automatically creates a "Default Chat" and maintains history (last 20 messages).
 
 | Command | Description |
 |---|---|
-| `chat "How are you?"` | Sends a direct text prompt to the active model. |
-| `chat -f file.txt` | Reads a file and uses its content as the prompt. |
-| `chat -f f1.txt -f f2.txt "Summarize"` | Combines multiple files with a text prompt for context. |
+| `chat "How are you?"` | Sends a prompt to the active model. |
+| `chat -f file.txt` | Uses file content as the prompt. |
+| `chat -f f1.txt -f f2.txt "Summarize"` | Combines multiple files for context. |
 | `chat` | Enters interactive mode (stdin) if no prompt is provided. |
+| `chat --alias <name>` | Registers a custom command name (e.g. `chat --alias ai`). |
+
+---
+
+## Chat Sessions
+
+Manage persistent multi-turn conversations using the `chat chat` subcommand.
+
+| Command | Description |
+|---|---|
+| `chat chat` | Shows a summary of the current active session. |
+| `chat chat --list [term]` | Lists all sessions or searches by title/ID. |
+| `chat chat --new "Title"` | Starts a brand new chat session with a custom title. |
+| `chat chat --switch <id>` | Switches the active session (supports partial IDs or titles). |
+| `chat chat --rename "New"` | Renames the current active session. |
+| `chat chat --delete <id>` | Deletes a session and its history. |
+
+---
 
 ## Model Management
 
-Commands for switching and exploring the 199+ available models.
+Explore and switch between the 199+ available NVIDIA hosted models using the `chat model` subcommand.
 
 | Command | Description |
 |---|---|
-| `chat model` | Shows the currently active model. |
-| `chat model -l / --list` | Lists all available model groups (llm, multimodal, etc.) with model counts. |
-| `chat model -l <group>` | Lists all models within the specific category. |
-| `chat model -l all` | Dumps every single supported model into the terminal. |
-| `chat model --search <term>` | Fuzzy search across all 199 models (e.g., `chat model --search llama`). |
-| `chat model -s / --s <name>` | Switches the active model. Supports partial names (e.g. `-s deepseek`). |
+| `chat model` | Displays the currently active model. |
+| `chat model --list` | Lists all available model groups (llm, multimodal, etc.). |
+| `chat model --list <group>` | Lists all models within a specific category. |
+| `chat model --list all` | Dumps every supported model into the terminal. |
+| `chat model --search <term>` | Fuzzy search across the entire model registry. |
+| `chat model --s <name>` | Switches the active model (supports partial name matching). |
 
-## Configuration
+---
+
+## Configuration & Path Setup
 
 Your preferences are stored locally at:
 - **Windows**: `%USERPROFILE%\.nimui\config.json`
@@ -45,8 +65,8 @@ Your preferences are stored locally at:
   | `chat --alias <name>` | Registers `<name>` as a command. |
   
   Once registered, the alias works exactly like `chat`. To ensure these aliases work globally regardless of your active environment, you should add the following directory to your system's **PATH**:
-  - **Windows**: `%USERPROFILE%\.nimui\scripts`
-  - **Linux/macOS**: `~/.nimui/bin`
+- **Windows**: `%USERPROFILE%\.nimui\scripts`
+- **Linux/macOS**: `~/.nimui/bin`
   
   Example usage after setup:
   ```bash
