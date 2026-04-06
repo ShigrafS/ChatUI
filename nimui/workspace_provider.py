@@ -282,6 +282,34 @@ def get_chunks_near_lines(workspace_id: str, file_path: str, start_line: int, en
             "content": r[3], "rel_path": r[4], "language": r[5]
         } for r in rows]
 
+def get_dependents(workspace_id: str, file_path: str) -> List[Dict]:
+    """
+    Find files that import the given file or its module name.
+    """
+    _init_db()
+    # 1. Normalize path for matching (e.g. nimui/chat_manager.py -> nimui.chat_manager)
+    module_name = file_path.replace("\\", "/").replace("/", ".").replace(".py", "")
+    filename = Path(file_path).name.replace(".py", "")
+    
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        # Search for imports of this module or filename
+        cursor.execute("""
+            SELECT name, file_path, signature, start_line
+            FROM workspace_symbols
+            WHERE workspace_id = ? 
+              AND type = 'import'
+              AND (name = ? OR name LIKE ? OR name = ?)
+        """, (workspace_id, module_name, f"%.{module_name}", filename))
+        
+        rows = cursor.fetchall()
+        return [{
+            "import_name": r[0],
+            "dependent_file": r[1],
+            "line": r[3],
+            "signature": r[2]
+        } for r in rows]
+
 def clear_workspace_symbols(workspace_id: str):
     """Remove all symbols for a workspace (used during re-scan)."""
     _init_db()

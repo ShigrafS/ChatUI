@@ -14,6 +14,7 @@ from nimui import repo_scanner
 from nimui import retriever
 from nimui import planner
 from nimui import coder
+from nimui import impact
 from rich.console import Console
 from rich.tree import Tree
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -476,6 +477,63 @@ def handle_implement_cmd(step_num):
     chat_manager.update_step_status(task['id'], step['index'], 'done')
 
 
+def handle_impact_cmd(step_num):
+    """Handle `chat impact <step_num>` command."""
+    ws_id = workspace_provider.get_active_workspace_id()
+    if not ws_id:
+        rprint("[yellow]No active workspace.[/yellow]")
+        return
+    
+    chat_id = chat_manager.get_current_chat_id()
+    if not chat_id:
+        rprint("[yellow]No active chat session.[/yellow]")
+        return
+    
+    try:
+        step_idx = int(step_num)
+    except ValueError:
+        rprint(f"[red]Error:[/red] Invalid step number: {step_num}")
+        return
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        transient=True,
+    ) as progress:
+        progress.add_task(description=f"Analyzing impact for step {step_num}...", total=None)
+        result = impact.analyze_step_impact(ws_id, chat_id, step_idx)
+    
+    if isinstance(result, str):
+        import json
+        try:
+            res = json.loads(result)
+            rprint(f"\n[bold yellow]Impact Assessment for Step {step_num}:[/bold yellow]")
+            
+            rprint("\n[bold]Affected Files:[/bold]")
+            for f in res.get('affected_files', []):
+                rprint(f"  - {f}")
+            
+            rprint(f"\n[bold]Risk Assessment:[/bold] {res.get('risk_assessment', 'Unknown')}")
+            
+            rprint("\n[bold]Suggestions:[/bold]")
+            for s in res.get('suggestions', []):
+                rprint(f"  - {s}")
+        except:
+            rprint(f"\n[bold red]Error parsing impact report.[/bold red]")
+            rprint(result)
+    else:
+        rprint(f"\n[bold red]Impact Analysis Failed:[/bold red] {result.get('error')}")
+
+
+def handle_safe_implement_cmd(step_num):
+    """Run impact analysis then implement."""
+    handle_impact_cmd(step_num)
+    rprint("\n[bold cyan]Proceed with implementation? (y/n)[/bold cyan]")
+    choice = input("> ").lower()
+    if choice == 'y':
+        handle_implement_cmd(step_num)
+
+
 def handle_next_cmd():
     """Find the first pending step and implement it."""
     chat_id = chat_manager.get_current_chat_id()
@@ -649,6 +707,16 @@ def main():
             print("Usage: chat implement <step_number>")
             return
         handle_implement_cmd(sys.argv[2])
+    elif len(sys.argv) > 1 and sys.argv[1] == "impact":
+        if len(sys.argv) < 3:
+            print("Usage: chat impact <step_number>")
+            return
+        handle_impact_cmd(sys.argv[2])
+    elif len(sys.argv) > 1 and sys.argv[1] == "safe-implement":
+        if len(sys.argv) < 3:
+            print("Usage: chat safe-implement <step_number>")
+            return
+        handle_safe_implement_cmd(sys.argv[2])
     elif len(sys.argv) > 1 and sys.argv[1] == "next":
         handle_next_cmd()
     elif len(sys.argv) > 1 and sys.argv[1] == "detach":
