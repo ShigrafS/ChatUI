@@ -9,6 +9,14 @@ import platform
 from pathlib import Path
 from nimui.model_manager import get_current_model, set_model, list_models, search_models, add_alias, get_config_dir
 from nimui import chat_manager
+from nimui import workspace_provider
+from nimui import repo_scanner
+from rich.console import Console
+from rich.tree import Tree
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich import print as rprint
+
+console = Console()
 
 
 def handle_model_cmd(args):
@@ -200,6 +208,108 @@ def handle_chat_cmd(args):
                 print("Error: Active chat not found in storage.")
 
 
+def handle_attach_cmd(args):
+    """Handle `chat attach` subcommand."""
+    target_path = None
+    if args.pwd:
+        target_path = os.getcwd()
+    elif args.dir:
+        target_path = os.path.abspath(args.dir)
+    
+    if not target_path:
+        print("Error: Specify --pwd or --dir <path>")
+        return
+
+    if not os.path.isdir(target_path):
+        print(f"Error: Not a directory: {target_path}")
+        return
+
+    name = os.path.basename(target_path) or "root"
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        transient=True,
+    ) as progress:
+        progress.add_task(description=f"Attaching {target_path}...", total=None)
+        
+        # 1. Create/Get workspace
+        ws_id = workspace_provider.create_workspace(name, target_path)
+        
+        # 2. Scan repo
+        count = repo_scanner.scan_repo(ws_id, target_path)
+        
+        # 3. Set as active
+        workspace_provider.set_active_workspace_id(ws_id)
+
+    rprint(f"[green]Successfully attached workspace:[/green] {name}")
+    rprint(f"Path: {target_path}")
+    rprint(f"Files indexed: {count}")
+
+
+def handle_status_cmd():
+    """Handle `chat status` command."""
+    ws_id = workspace_provider.get_active_workspace_id()
+    if not ws_id:
+        rprint("[yellow]No active workspace.[/yellow] Use `chat attach --pwd` to start.")
+        return
+
+    # find it in list (lazy way)
+    workspaces = workspace_provider.list_workspaces()
+    ws = next((w for w in workspaces if w["id"] == ws_id), None)
+    
+    if not ws:
+        rprint("[red]Error:[/red] Active workspace not found in database.")
+        return
+
+    rprint(f"\n[bold]Current Workspace:[/bold] {ws['name']}")
+    rprint(f"  ID:   {ws['id'][:8]}")
+    rprint(f"  Path: {ws['root_path']}")
+    rprint(f"  Files: {ws['files_count']}")
+    print()
+
+
+def handle_tree_cmd():
+    """Handle `chat tree` command."""
+    ws_id = workspace_provider.get_active_workspace_id()
+    if not ws_id:
+        rprint("[yellow]No active workspace.[/yellow]")
+        return
+
+    files = workspace_provider.get_workspace_files(ws_id)
+    if not files:
+        print("No files indexed in this workspace.")
+        return
+
+    # Build tree
+    workspaces = workspace_provider.list_workspaces()
+    ws = next((w for w in workspaces if w["id"] == ws_id), None)
+    
+    tree = Tree(f"[bold blue]{ws['name']}[/bold blue] ({ws['root_path']})")
+    
+    # Simple tree builder logic
+    nodes = {"": tree}
+    for rel_path in sorted(files):
+        parts = rel_path.split(os.sep)
+        current_path = ""
+        for i, part in enumerate(parts):
+            parent_path = current_path
+            current_path = os.path.join(current_path, part) if current_path else part
+            
+            if current_path not in nodes:
+                is_file = (i == len(parts) - 1)
+                label = f"[green]{part}[/green]" if is_file else f"[bold yellow]{part}[/bold yellow]"
+                nodes[current_path] = nodes[parent_path].add(label)
+    
+    console.print(tree)
+
+
+def handle_detach_cmd():
+    """Handle `chat detach` command."""
+    workspace_provider.set_active_workspace_id(None)
+    rprint("[green]Detached from workspace.[/green]")
+
+
 def handle_alias(alias_name):
     """Handle adding a command alias in a neutral location."""
     if not alias_name:
@@ -284,6 +394,19 @@ def main():
         
         args = chat_parser.parse_args(sys.argv[2:])
         handle_chat_cmd(args)
+    elif len(sys.argv) > 1 and sys.argv[1] == "attach":
+        attach_parser = argparse.ArgumentParser(prog="chat attach", description="Attach a repository to the current session.")
+        group = attach_parser.add_mutually_exclusive_group(required=True)
+        group.add_argument("--pwd", action="store_true", help="Attach current directory")
+        group.add_argument("--dir", metavar="PATH", help="Attach specific directory")
+        args = attach_parser.parse_args(sys.argv[2:])
+        handle_attach_cmd(args)
+    elif len(sys.argv) > 1 and sys.argv[1] == "status":
+        handle_status_cmd()
+    elif len(sys.argv) > 1 and sys.argv[1] == "tree":
+        handle_tree_cmd()
+    elif len(sys.argv) > 1 and sys.argv[1] == "detach":
+        handle_detach_cmd()
     else:
         prompt_parser = argparse.ArgumentParser(
             description="NimUI — chat with NVIDIA API models."

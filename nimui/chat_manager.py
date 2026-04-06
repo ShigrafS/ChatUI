@@ -27,8 +27,10 @@ def _init_db():
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 model TEXT NOT NULL,
+                workspace_id TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces (id) ON DELETE SET NULL
             )
         """)
         
@@ -41,6 +43,30 @@ def _init_db():
                 content TEXT NOT NULL,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (chat_id) REFERENCES chats (id) ON DELETE CASCADE
+            )
+        """)
+
+        # Workspaces table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS workspaces (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                root_path TEXT UNIQUE NOT NULL,
+                status TEXT DEFAULT 'indexed',
+                files_count INTEGER DEFAULT 0,
+                indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Workspace Files table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS workspace_files (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                rel_path TEXT NOT NULL,
+                size_bytes INTEGER,
+                last_modified TIMESTAMP,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces (id) ON DELETE CASCADE
             )
         """)
         
