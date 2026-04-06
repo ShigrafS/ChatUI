@@ -11,9 +11,11 @@ def _get_db_path():
     return config_dir / DB_NAME
 
 def _get_conn():
-    """Create a SQLite connection with foreign keys enabled."""
+    """Create a SQLite connection with foreign keys and WAL mode enabled."""
     conn = sqlite3.connect(_get_db_path())
     conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
     return conn
 
 def _init_db():
@@ -54,6 +56,8 @@ def _init_db():
                 root_path TEXT UNIQUE NOT NULL,
                 status TEXT DEFAULT 'indexed',
                 files_count INTEGER DEFAULT 0,
+                chunk_size INTEGER DEFAULT 100,
+                chunk_overlap INTEGER DEFAULT 10,
                 indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -67,6 +71,31 @@ def _init_db():
                 size_bytes INTEGER,
                 last_modified TIMESTAMP,
                 FOREIGN KEY (workspace_id) REFERENCES workspaces (id) ON DELETE CASCADE
+            )
+        """)
+
+        # Workspace Chunks table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS workspace_chunks (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                file_id TEXT NOT NULL,
+                start_line INTEGER,
+                end_line INTEGER,
+                content TEXT NOT NULL,
+                language TEXT,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces (id) ON DELETE CASCADE,
+                FOREIGN KEY (file_id) REFERENCES workspace_files (id) ON DELETE CASCADE
+            )
+        """)
+
+        # Virtual table for Full-Text Search (FTS5)
+        # We store the workspace_id and chunk_id for filtering
+        cursor.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+                content,
+                workspace_id UNINDEXED,
+                chunk_id UNINDEXED
             )
         """)
         

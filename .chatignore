@@ -1,0 +1,16 @@
+# Virtual Environment
+environ/
+venv/
+.venv/
+ENV/
+
+# Databases & Config
+.nimui/
+chats.db
+chats.db-wal
+chats.db-shm
+
+# Cache
+__pycache__/
+.pytest_cache/
+.mypy_cache/

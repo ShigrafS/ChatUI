@@ -11,6 +11,7 @@ from nimui.model_manager import get_current_model, set_model, list_models, searc
 from nimui import chat_manager
 from nimui import workspace_provider
 from nimui import repo_scanner
+from nimui import retriever
 from rich.console import Console
 from rich.tree import Tree
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -82,12 +83,23 @@ def handle_prompt_cmd(args):
     chat_manager.add_message(chat_id, "user", prompt)
     history.append({"role": "user", "content": prompt})
 
+    _stream_nvidia_response(MODEL, history, chat_id)
+
+
+def _stream_nvidia_response(model, messages, chat_id=None):
+    """Internal helper to handle streaming from NIM API."""
+    load_dotenv()
+    API_KEY = os.getenv("NVIDIA_API_KEY")
+    if not API_KEY:
+        print("Error: NVIDIA_API_KEY is not set in .env")
+        sys.exit(1)
+
     url = "https://integrate.api.nvidia.com/v1/chat/completions"
     payload = {
-        "model": MODEL,
-        "messages": history,
+        "model": model,
+        "messages": messages,
         "temperature": 0.2,
-        "stream": True  # Enable SSE streaming
+        "stream": True
     }
     headers = {
         "Authorization": f"Bearer {API_KEY}",
@@ -97,6 +109,9 @@ def handle_prompt_cmd(args):
 
     try:
         with requests.post(url, json=payload, headers=headers, stream=True) as response:
+            if response.status_code == 404:
+                rprint(f"[red]Error:[/red] Model '{model}' not found or API key invalid.")
+                return
             response.raise_for_status()
             
             # Simple "Thinking..." indicator
@@ -126,16 +141,15 @@ def handle_prompt_cmd(args):
                             print(content, end="", flush=True)
                             full_response += content
                 except json.JSONDecodeError:
-                    # sometimes the API might send malformed chunk or partial
                     continue
             print() # newline at end
             
-            # 4. Save response to history
-            if full_response:
+            # Save response to history if we have a chat_id
+            if chat_id and full_response:
                 chat_manager.add_message(chat_id, "assistant", full_response)
     except Exception as e:
         print(f"\nError connecting to API: {e}")
-        sys.exit(1)
+        # sys.exit(1) # don't exit entirely in multi-command mode
 
 
 def handle_chat_cmd(args):
@@ -226,15 +240,18 @@ def handle_attach_cmd(args):
 
     name = os.path.basename(target_path) or "root"
     
+    chunk_size = getattr(args, 'chunk_size', 100) or 100
+    overlap = getattr(args, 'overlap', 10) or 10
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         transient=True,
     ) as progress:
-        progress.add_task(description=f"Attaching {target_path}...", total=None)
+        progress.add_task(description=f"Attaching {target_path} (chunk_size={chunk_size}, overlap={overlap})...", total=None)
         
         # 1. Create/Get workspace
-        ws_id = workspace_provider.create_workspace(name, target_path)
+        ws_id = workspace_provider.create_workspace(name, target_path, chunk_size=chunk_size, chunk_overlap=overlap)
         
         # 2. Scan repo
         count = repo_scanner.scan_repo(ws_id, target_path)
@@ -245,6 +262,7 @@ def handle_attach_cmd(args):
     rprint(f"[green]Successfully attached workspace:[/green] {name}")
     rprint(f"Path: {target_path}")
     rprint(f"Files indexed: {count}")
+    rprint(f"Config: chunk_size={chunk_size}, overlap={overlap}")
 
 
 def handle_status_cmd():
@@ -308,6 +326,63 @@ def handle_detach_cmd():
     """Handle `chat detach` command."""
     workspace_provider.set_active_workspace_id(None)
     rprint("[green]Detached from workspace.[/green]")
+
+
+def handle_search_cmd(query):
+    """Handle `chat search` command."""
+    ws_id = workspace_provider.get_active_workspace_id()
+    if not ws_id:
+        rprint("[yellow]No active workspace.[/yellow]")
+        return
+
+    results = workspace_provider.search_chunks(ws_id, query)
+    if not results:
+        rprint(f"[yellow]No results found for:[/yellow] {query}")
+        return
+
+    rprint(f"\n[bold green]Search results for '{query}':[/bold green]\n")
+    for r in results:
+        lang_str = f" [blue][{r['language']}][/blue]" if r.get('language') else ""
+        rprint(f"[bold cyan]{r['rel_path']}[/bold cyan]{lang_str} [grey]({r['start_line']}-{r['end_line']})[/grey]")
+        
+        # Format the content snippet with a simple box or indentation
+        lines = r['content'].splitlines()
+        max_lines = 5
+        snippet = "\n".join([f"  {line}" for line in lines[:max_lines]])
+        print(f"{snippet}")
+        if len(lines) > max_lines:
+            print(f"  ...")
+        print("-" * 30)
+
+
+def handle_ask_cmd(query):
+    """Handle `chat ask` command (Grounded RAG)."""
+    ws_id = workspace_provider.get_active_workspace_id()
+    if not ws_id:
+        rprint("[yellow]No active workspace.[/yellow] Attach one with `chat attach --pwd` first.")
+        return
+
+    MODEL = get_current_model()
+    
+    # 1. Retrieve context
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        transient=True,
+    ) as progress:
+        progress.add_task(description=f"Searching repository for: {query}...", total=None)
+        context = retriever.retrieve_context(ws_id, query)
+    
+    if not context:
+        rprint("[yellow]No relevant code found in repository to answer your question.[/yellow]")
+        return
+    
+    # 2. Build QA messages
+    messages = retriever.build_qa_prompt(query, context)
+    
+    # 3. Stream from NVIDIA
+    rprint(f"\n[bold green]Answer (using context from repository):[/bold green]\n")
+    _stream_nvidia_response(MODEL, messages)
 
 
 def handle_alias(alias_name):
@@ -399,10 +474,22 @@ def main():
         group = attach_parser.add_mutually_exclusive_group(required=True)
         group.add_argument("--pwd", action="store_true", help="Attach current directory")
         group.add_argument("--dir", metavar="PATH", help="Attach specific directory")
+        attach_parser.add_argument("--chunk-size", type=int, help="Number of lines per chunk (default: 100)")
+        attach_parser.add_argument("--overlap", type=int, help="Number of lines to overlap (default: 10)")
         args = attach_parser.parse_args(sys.argv[2:])
         handle_attach_cmd(args)
     elif len(sys.argv) > 1 and sys.argv[1] == "status":
         handle_status_cmd()
+    elif len(sys.argv) > 1 and sys.argv[1] == "search":
+        if len(sys.argv) < 3:
+            print("Usage: chat search <query>")
+            return
+        handle_search_cmd(sys.argv[2])
+    elif len(sys.argv) > 1 and sys.argv[1] == "ask":
+        if len(sys.argv) < 3:
+            print("Usage: chat ask <question>")
+            return
+        handle_ask_cmd(" ".join(sys.argv[2:]))
     elif len(sys.argv) > 1 and sys.argv[1] == "tree":
         handle_tree_cmd()
     elif len(sys.argv) > 1 and sys.argv[1] == "detach":
