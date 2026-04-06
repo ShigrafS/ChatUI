@@ -23,6 +23,7 @@ dist/
 
 # Logs
 *.log
+log.md
 
 # OS files
 .DS_Store
