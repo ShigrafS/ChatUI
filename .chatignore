@@ -4,6 +4,9 @@ venv/
 .venv/
 ENV/
 
+# Git internals
+.git/
+
 # Databases & Config
 .nimui/
 chats.db

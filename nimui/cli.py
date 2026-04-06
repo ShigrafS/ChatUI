@@ -355,6 +355,31 @@ def handle_search_cmd(query):
         print("-" * 30)
 
 
+def handle_symbols_cmd(query):
+    """Handle `chat symbols` command."""
+    ws_id = workspace_provider.get_active_workspace_id()
+    if not ws_id:
+        rprint("[yellow]No active workspace.[/yellow]")
+        return
+
+    results = workspace_provider.search_symbols(ws_id, query)
+    if not results:
+        rprint(f"[yellow]No symbols found matching:[/yellow] {query}")
+        return
+
+    rprint(f"\n[bold green]Symbols matching '{query}':[/bold green]\n")
+    for s in results:
+        type_color = {"function": "cyan", "class": "magenta", "interface": "blue"}.get(s['type'], "white")
+        line_range = f":{s['start_line']}"
+        if s.get('end_line'):
+            line_range += f"-{s['end_line']}"
+        rprint(f"  [{type_color}]{s['name']}[/{type_color}] ({s['type']})")
+        rprint(f"    {s['file_path']}{line_range}")
+        if s.get('signature'):
+            rprint(f"    [dim]{s['signature'].strip()}[/dim]")
+        print()
+
+
 def handle_ask_cmd(query):
     """Handle `chat ask` command (Grounded RAG)."""
     ws_id = workspace_provider.get_active_workspace_id()
@@ -492,6 +517,11 @@ def main():
         handle_ask_cmd(" ".join(sys.argv[2:]))
     elif len(sys.argv) > 1 and sys.argv[1] == "tree":
         handle_tree_cmd()
+    elif len(sys.argv) > 1 and sys.argv[1] == "symbols":
+        if len(sys.argv) < 3:
+            print("Usage: chat symbols <query>")
+            return
+        handle_symbols_cmd(" ".join(sys.argv[2:]))
     elif len(sys.argv) > 1 and sys.argv[1] == "detach":
         handle_detach_cmd()
     else:

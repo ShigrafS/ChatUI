@@ -1,9 +1,13 @@
 import os
+import re
 import logging
 from pathlib import Path
 from typing import List, Optional, Dict
 import pathspec
-from nimui.workspace_provider import add_workspace_file, clear_workspace_files, update_workspace_stats, add_chunks_batch, get_workspace_by_path
+from nimui.workspace_provider import (
+    add_workspace_file, clear_workspace_files, update_workspace_stats,
+    add_chunks_batch, get_workspace_by_path, add_symbols_batch, clear_workspace_symbols
+)
 from nimui import embedding_provider, vector_store
 
 # Basic logging setup
@@ -41,10 +45,12 @@ class Scanner:
         overlap = ws["chunk_overlap"] if ws else 10
         
         clear_workspace_files(workspace_id)
+        clear_workspace_symbols(workspace_id)
         vector_store.delete_index(workspace_id)
         
         count = 0
         all_chunks = []
+        all_symbols = []
         BATCH_SIZE = 50 # Lower batch size for API embedding limits
         
         for root, dirs, files in os.walk(self.root_path):
@@ -69,9 +75,18 @@ class Scanner:
                     chunks = self.chunk_file(workspace_id, rel_path, full_path, chunk_size, overlap)
                     all_chunks.extend(chunks)
                     
+                    # Extract symbols from file
+                    syms = self.extract_symbols(workspace_id, rel_path, full_path)
+                    all_symbols.extend(syms)
+                    
                     if len(all_chunks) >= BATCH_SIZE:
                         self._flush_chunks(workspace_id, all_chunks)
                         all_chunks = []
+                    
+                    # Flush symbols periodically
+                    if len(all_symbols) >= 200:
+                        add_symbols_batch(workspace_id, all_symbols)
+                        all_symbols = []
                         
                     count += 1
                 except Exception as e:
@@ -81,9 +96,9 @@ class Scanner:
         if all_chunks:
             self._flush_chunks(workspace_id, all_chunks)
         
-        # Final flush
-        if all_chunks:
-            add_chunks_batch(workspace_id, all_chunks)
+        # Final symbol flush
+        if all_symbols:
+            add_symbols_batch(workspace_id, all_symbols)
             
         update_workspace_stats(workspace_id, count)
         return count
@@ -133,6 +148,105 @@ class Scanner:
                 break
         
         return file_chunks
+
+    # Regex patterns per language
+    SYMBOL_PATTERNS = {
+        'python': [
+            (r'^(\s*)def\s+(\w+)\s*\(', 'function'),
+            (r'^(\s*)class\s+(\w+)', 'class'),
+        ],
+        'javascript': [
+            (r'function\s+(\w+)\s*\(', 'function'),
+            (r'class\s+(\w+)', 'class'),
+            (r'export\s+const\s+(\w+)', 'function'),
+        ],
+        'typescript': [
+            (r'function\s+(\w+)\s*\(', 'function'),
+            (r'class\s+(\w+)', 'class'),
+            (r'interface\s+(\w+)', 'interface'),
+            (r'export\s+const\s+(\w+)', 'function'),
+        ],
+    }
+
+    # skip files bigger than 500KB or minified
+    MAX_SYMBOL_FILE_SIZE = 500_000
+
+    def extract_symbols(self, workspace_id: str, rel_path: str, full_path: Path) -> List[Dict]:
+        """Extract function/class/interface definitions using regex."""
+        ext = full_path.suffix.lower().lstrip('.')
+        lang_map = {'py': 'python', 'js': 'javascript', 'ts': 'typescript', 'tsx': 'typescript'}
+        language = lang_map.get(ext)
+        if not language:
+            return []
+
+        patterns = self.SYMBOL_PATTERNS.get(language, [])
+        if not patterns:
+            return []
+
+        # skip large / minified files
+        try:
+            size = full_path.stat().st_size
+            if size > self.MAX_SYMBOL_FILE_SIZE:
+                return []
+        except OSError:
+            return []
+
+        try:
+            with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+        except Exception:
+            return []
+
+        # basic minification check — avg line length > 200 likely minified
+        if lines and (sum(len(l) for l in lines) / len(lines)) > 200:
+            return []
+
+        file_id = f"{workspace_id}:{rel_path}"
+        symbols = []
+
+        for line_no, line in enumerate(lines, start=1):
+            # skip comment-only lines
+            stripped = line.lstrip()
+            if stripped.startswith('#') or stripped.startswith('//'):
+                continue
+
+            for pattern, sym_type in patterns:
+                m = re.search(pattern, line)
+                if m:
+                    # last group is the name
+                    name = m.group(m.lastindex)
+                    # rough end_line: scan for next def/class or +50 lines
+                    end_line = self._estimate_end_line(lines, line_no - 1, language)
+                    signature = line.rstrip()
+
+                    symbols.append({
+                        'file_id': file_id,
+                        'file_path': rel_path,
+                        'name': name,
+                        'type': sym_type,
+                        'language': language,
+                        'start_line': line_no,
+                        'end_line': end_line,
+                        'signature': signature,
+                    })
+                    break  # one match per line is enough
+
+        return symbols
+
+    def _estimate_end_line(self, lines: List[str], start_idx: int, language: str) -> int:
+        """Rough heuristic to find the end of a symbol block."""
+        # For python: look for next line with same or less indentation
+        indent = len(lines[start_idx]) - len(lines[start_idx].lstrip())
+        max_end = min(start_idx + 200, len(lines))  # cap at 200 lines
+
+        for i in range(start_idx + 1, max_end):
+            l = lines[i]
+            if not l.strip():  # skip blank lines
+                continue
+            cur_indent = len(l) - len(l.lstrip())
+            if cur_indent <= indent and l.strip():
+                return i  # line before this one, 1-indexed
+        return max_end
 
     def _flush_chunks(self, workspace_id: str, chunks: List[Dict]):
         """Generate embeddings and flush chunks to database."""

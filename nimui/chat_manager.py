@@ -99,6 +99,26 @@ def _init_db():
                 chunk_id UNINDEXED
             )
         """)
+
+        # Workspace Symbols table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS workspace_symbols (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                file_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                chunk_id TEXT,
+                name TEXT NOT NULL,
+                type TEXT,
+                language TEXT,
+                start_line INTEGER,
+                end_line INTEGER,
+                signature TEXT,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces (id) ON DELETE CASCADE,
+                FOREIGN KEY (file_id) REFERENCES workspace_files (id) ON DELETE CASCADE,
+                FOREIGN KEY (chunk_id) REFERENCES workspace_chunks (id) ON DELETE SET NULL
+            )
+        """)
         
         conn.commit()
 

@@ -221,6 +221,51 @@ def _get_chunks_by_vector_ids(workspace_id: str, vector_ids: List[int]) -> List[
             "content": r[3], "rel_path": r[4], "language": r[5]
         } for r in sorted_rows]
 
+def add_symbols_batch(workspace_id: str, symbols: List[Dict]):
+    """Batch insert extracted symbols into workspace_symbols."""
+    if not symbols:
+        return
+    _init_db()
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        for s in symbols:
+            sym_id = str(uuid.uuid4())
+            cursor.execute(
+                """INSERT INTO workspace_symbols
+                   (id, workspace_id, file_id, file_path, chunk_id, name, type, language, start_line, end_line, signature)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (sym_id, workspace_id, s['file_id'], s['file_path'], s.get('chunk_id'),
+                 s['name'], s['type'], s.get('language'), s['start_line'], s.get('end_line'), s.get('signature'))
+            )
+        conn.commit()
+
+def search_symbols(workspace_id: str, query: str, limit: int = 20) -> List[Dict]:
+    """Search symbols by name using LIKE."""
+    _init_db()
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT name, type, file_path, start_line, end_line, signature, language
+            FROM workspace_symbols
+            WHERE workspace_id = ? AND name LIKE ?
+            ORDER BY name
+            LIMIT ?
+        """, (workspace_id, f"%{query}%", limit))
+        rows = cursor.fetchall()
+        return [{
+            "name": r[0], "type": r[1], "file_path": r[2],
+            "start_line": r[3], "end_line": r[4],
+            "signature": r[5], "language": r[6]
+        } for r in rows]
+
+def clear_workspace_symbols(workspace_id: str):
+    """Remove all symbols for a workspace (used during re-scan)."""
+    _init_db()
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM workspace_symbols WHERE workspace_id = ?", (workspace_id,))
+        conn.commit()
+
 def get_workspace_files(workspace_id: str) -> List[str]:
     """List all file paths in a workspace."""
     _init_db()
