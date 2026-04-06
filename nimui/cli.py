@@ -12,6 +12,8 @@ from nimui import chat_manager
 from nimui import workspace_provider
 from nimui import repo_scanner
 from nimui import retriever
+from nimui import planner
+from nimui import coder
 from rich.console import Console
 from rich.tree import Tree
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -284,6 +286,16 @@ def handle_status_cmd():
     rprint(f"  ID:   {ws['id'][:8]}")
     rprint(f"  Path: {ws['root_path']}")
     rprint(f"  Files: {ws['files_count']}")
+    
+    # Task status
+    chat_id = chat_manager.get_current_chat_id()
+    if chat_id:
+        task = chat_manager.get_active_task(chat_id)
+        if task:
+            rprint(f"\n[bold yellow]Active Task:[/bold yellow] {task['goal']}")
+            for s in task['steps']:
+                status = "[green]✔[/green]" if s['status'] == 'done' else "[grey]○[/grey]"
+                rprint(f"  {status} {s['index']}. {s['description']}")
     print()
 
 
@@ -378,6 +390,111 @@ def handle_symbols_cmd(query):
         if s.get('signature'):
             rprint(f"    [dim]{s['signature'].strip()}[/dim]")
         print()
+
+        print()
+
+
+def handle_plan_cmd(goal):
+    """Handle `chat plan` command."""
+    ws_id = workspace_provider.get_active_workspace_id()
+    if not ws_id:
+        rprint("[yellow]No active workspace.[/yellow]")
+        return
+    
+    chat_id = chat_manager.get_current_chat_id()
+    if not chat_id:
+        # Auto-create chat for plan
+        chat_id = chat_manager.create_chat(f"Plan: {goal}", get_current_model())
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        transient=True,
+    ) as progress:
+        progress.add_task(description=f"Decomposing task: {goal}...", total=None)
+        steps = planner.generate_plan(chat_id, ws_id, goal)
+    
+    if not steps:
+        rprint("[red]Failed to generate plan. Check logs.[/red]")
+        return
+
+    rprint(f"\n[bold green]Implementation Plan for:[/bold green] {goal}")
+    for i, s in enumerate(steps, 1):
+        file_hint = f" [dim]({s.get('file_path')})[/dim]" if s.get('file_path') else ""
+        rprint(f" [blue]{i}.[/blue] {s['description']}{file_hint}")
+    rprint(f"\nUse [bold]chat implement <number>[/bold] or [bold]chat next[/bold] to proceed.")
+
+
+def handle_implement_cmd(step_num):
+    """Handle `chat implement <step_num>` command."""
+    ws_id = workspace_provider.get_active_workspace_id()
+    if not ws_id:
+        rprint("[yellow]No active workspace.[/yellow]")
+        return
+    
+    chat_id = chat_manager.get_current_chat_id()
+    if not chat_id:
+        rprint("[yellow]No active chat session.[/yellow]")
+        return
+    
+    task = chat_manager.get_active_task(chat_id)
+    if not task:
+        rprint("[yellow]No active task to implement. Use `chat plan <goal>` first.[/yellow]")
+        return
+    
+    try:
+        step_idx = int(step_num)
+        step = next((s for s in task['steps'] if s['index'] == step_idx), None)
+    except ValueError:
+        rprint(f"[red]Error:[/red] Invalid step number: {step_num}")
+        return
+    
+    if not step:
+        rprint(f"[red]Error:[/red] Step {step_num} not found in current plan.")
+        return
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        transient=True,
+    ) as progress:
+        progress.add_task(description=f"Generating diff for step {step_num}: {step['description']}...", total=None)
+        diff = coder.generate_diff(ws_id, step['description'], step['file_path'])
+    
+    if not diff:
+        rprint("[red]Failed to generate diff.[/red]")
+        return
+
+    rprint(f"\n[bold green]Suggested Diff for Step {step_num}:[/bold green]\n")
+    # Using simple print for diff to ensure it's easy to copy
+    print(diff)
+    print("\n" + "="*40)
+    rprint("Apply this diff manually or with [bold]git apply[/bold].")
+    rprint("Once applied, you can move to the next step with [bold]chat next[/bold].")
+    
+    # Mark as done for convenience
+    chat_manager.update_step_status(task['id'], step['index'], 'done')
+
+
+def handle_next_cmd():
+    """Find the first pending step and implement it."""
+    chat_id = chat_manager.get_current_chat_id()
+    if not chat_id:
+        rprint("[yellow]No active session.[/yellow]")
+        return
+    
+    task = chat_manager.get_active_task(chat_id)
+    if not task or not task['steps']:
+        rprint("[yellow]No active plan found.[/yellow]")
+        return
+    
+    pending = [s for s in task['steps'] if s['status'] == 'pending']
+    if not pending:
+        rprint("[green]All steps in the current plan are marked as completed![/green]")
+        return
+    
+    next_step = pending[0]
+    handle_implement_cmd(next_step['index'])
 
 
 def handle_ask_cmd(query):
@@ -522,6 +639,18 @@ def main():
             print("Usage: chat symbols <query>")
             return
         handle_symbols_cmd(" ".join(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "plan":
+        if len(sys.argv) < 3:
+            print("Usage: chat plan <goal>")
+            return
+        handle_plan_cmd(" ".join(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "implement":
+        if len(sys.argv) < 3:
+            print("Usage: chat implement <step_number>")
+            return
+        handle_implement_cmd(sys.argv[2])
+    elif len(sys.argv) > 1 and sys.argv[1] == "next":
+        handle_next_cmd()
     elif len(sys.argv) > 1 and sys.argv[1] == "detach":
         handle_detach_cmd()
     else:

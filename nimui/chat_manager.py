@@ -119,6 +119,31 @@ def _init_db():
                 FOREIGN KEY (chunk_id) REFERENCES workspace_chunks (id) ON DELETE SET NULL
             )
         """)
+
+        # Tasks table for planning
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                chat_id TEXT NOT NULL,
+                goal TEXT NOT NULL,
+                status TEXT DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (chat_id) REFERENCES chats (id) ON DELETE CASCADE
+            )
+        """)
+
+        # Task Steps table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS task_steps (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                step_index INTEGER NOT NULL,
+                description TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                file_path TEXT,
+                FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE
+            )
+        """)
         
         conn.commit()
 
@@ -245,3 +270,53 @@ def get_chat_by_partial(term):
         )
         rows = cursor.fetchall()
         return [{"id": r[0], "title": r[1]} for r in rows]
+
+# Task & Planning Helpers
+
+def create_task_with_steps(chat_id: str, goal: str, steps: List[Dict]):
+    """Store a generated plan as a task with ordered steps."""
+    _init_db()
+    task_id = str(uuid.uuid4())
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        # 1. Close any existing active tasks for this chat
+        cursor.execute("UPDATE tasks SET status = 'completed' WHERE chat_id = ? AND status = 'active'", (chat_id,))
+        
+        # 2. Create the new task
+        cursor.execute("INSERT INTO tasks (id, chat_id, goal) VALUES (?, ?, ?)", (task_id, chat_id, goal))
+        
+        # 3. Insert steps
+        for i, s in enumerate(steps):
+            step_id = str(uuid.uuid4())
+            cursor.execute(
+                "INSERT INTO task_steps (id, task_id, step_index, description, file_path) VALUES (?, ?, ?, ?, ?)",
+                (step_id, task_id, i+1, s['description'], s.get('file_path'))
+            )
+        conn.commit()
+    return task_id
+
+def get_active_task(chat_id: str) -> Optional[Dict]:
+    """Retrieve the current active task and its steps."""
+    _init_db()
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, goal, created_at FROM tasks WHERE chat_id = ? AND status = 'active'", (chat_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        
+        task = {"id": row[0], "goal": row[1], "created_at": row[2], "steps": []}
+        cursor.execute("SELECT step_index, description, status, file_path FROM task_steps WHERE task_id = ? ORDER BY step_index", (task['id'],))
+        for r in cursor.fetchall():
+            task['steps'].append({
+                "index": r[0], "description": r[1], "status": r[2], "file_path": r[3]
+            })
+        return task
+
+def update_step_status(task_id: str, step_index: int, status: str = 'done'):
+    """Update progress on a specific step."""
+    _init_db()
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE task_steps SET status = ? WHERE task_id = ? AND step_index = ?", (status, task_id, step_index))
+        conn.commit()
