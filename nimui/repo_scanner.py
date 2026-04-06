@@ -154,17 +154,22 @@ class Scanner:
         'python': [
             (r'^(\s*)def\s+(\w+)\s*\(', 'function'),
             (r'^(\s*)class\s+(\w+)', 'class'),
+            (r'^(\s*)(?:import\s+(\w+)|from\s+(\w+)\s+import)', 'import'),
         ],
         'javascript': [
             (r'function\s+(\w+)\s*\(', 'function'),
             (r'class\s+(\w+)', 'class'),
             (r'export\s+const\s+(\w+)', 'function'),
+            (r'(?:import|from)\s+[\'"](.+)[\'"]', 'import'),
+            (r'require\s*\([\'"](.+)[\'"]\)', 'import'),
         ],
         'typescript': [
             (r'function\s+(\w+)\s*\(', 'function'),
             (r'class\s+(\w+)', 'class'),
             (r'interface\s+(\w+)', 'interface'),
             (r'export\s+const\s+(\w+)', 'function'),
+            (r'(?:import|from)\s+[\'"](.+)[\'"]', 'import'),
+            (r'require\s*\([\'"](.+)[\'"]\)', 'import'),
         ],
     }
 
@@ -213,10 +218,16 @@ class Scanner:
             for pattern, sym_type in patterns:
                 m = re.search(pattern, line)
                 if m:
-                    # last group is the name
-                    name = m.group(m.lastindex)
+                    # Find the last non-None group as the name
+                    groups = [g for g in m.groups() if g is not None]
+                    name = groups[-1] if groups else "unknown"
+                    
                     # rough end_line: scan for next def/class or +50 lines
-                    end_line = self._estimate_end_line(lines, line_no - 1, language)
+                    if sym_type == 'import':
+                        end_line = line_no
+                    else:
+                        end_line = self._estimate_end_line(lines, line_no - 1, language)
+                    
                     signature = line.rstrip()
 
                     symbols.append({

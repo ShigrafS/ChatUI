@@ -258,6 +258,30 @@ def search_symbols(workspace_id: str, query: str, limit: int = 20) -> List[Dict]
             "signature": r[5], "language": r[6]
         } for r in rows]
 
+def get_chunks_near_lines(workspace_id: str, file_path: str, start_line: int, end_line: int, window: int = 150) -> List[Dict]:
+    """Retrieve chunks in the same file within a line window of the given range."""
+    _init_db()
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        # Find chunks that overlap with [start - window, end + window]
+        # We also join with workspace_files to get the rel_path consistently
+        cursor.execute("""
+            SELECT wc.file_id, wc.start_line, wc.end_line, wc.content, f.rel_path, wc.language
+            FROM workspace_chunks wc
+            JOIN workspace_files f ON wc.file_id = f.id
+            WHERE wc.workspace_id = ? 
+              AND f.rel_path = ?
+              AND wc.start_line <= ?
+              AND wc.end_line >= ?
+            ORDER BY wc.start_line
+        """, (workspace_id, file_path, end_line + window, start_line - window))
+        
+        rows = cursor.fetchall()
+        return [{
+            "file_id": r[0], "start_line": r[1], "end_line": r[2],
+            "content": r[3], "rel_path": r[4], "language": r[5]
+        } for r in rows]
+
 def clear_workspace_symbols(workspace_id: str):
     """Remove all symbols for a workspace (used during re-scan)."""
     _init_db()
