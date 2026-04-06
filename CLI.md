@@ -53,9 +53,14 @@ NimUI features **Structure-Aware Hybrid RAG** and **Plan-to-Code** workflows. It
 | Command | Description |
 |---|---|
 | `chat attach --pwd` | Indexes the current directory (supports `.gitignore` and `.chatignore`). |
-| `chat symbols <query>` | Searches the structural symbol graph (functions, classes, imports). |
-| `chat ask "How to X?"` | Grounded Q&A using your codebase as context (Hybrid Vector + FTS5). |
+| `chat attach --dir <path>` | Indexes a specific directory path. |
+| `chat attach ... --chunk-size 100` | Optional: Set custom chunk size for indexing. |
+| `chat detach` | Removes the active workspace from the current session. |
 | `chat status` | Shows active workspace info and current task/plan progress. |
+| `chat tree` | Displays a visual file tree of the indexed workspace. |
+| `chat symbols <query>` | Searches the structural symbol graph (functions, classes, imports). |
+| `chat search <query>` | Full-text search across all indexed files (Hybrid Vector + FTS5). |
+| `chat ask "How to X?"` | Grounded Q&A using your codebase as context. |
 | `chat plan "Goal"` | Decomposes a high-level feature request into actionable steps. |
 | `chat impact <n>` | Predicts regressions and downstream dependencies for plan step `<n>`. |
 | `chat implement <n>` | Generates a minimalist unified diff to address plan step `<n>`. |
