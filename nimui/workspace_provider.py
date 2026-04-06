@@ -94,14 +94,15 @@ def add_chunks_batch(workspace_id: str, chunks: List[Dict]):
     _init_db()
     with _get_conn() as conn:
         cursor = conn.cursor()
-        for c in chunks:
+        for i, c in enumerate(chunks):
             chunk_id = str(uuid.uuid4())
             file_id = f"{workspace_id}:{c['rel_path']}"
             
-            # 1. Store in regular table
+            # 1. Store in regular table (using provided vector_id if available)
+            v_id = c.get('vector_id')
             cursor.execute(
-                "INSERT INTO workspace_chunks (id, workspace_id, file_id, start_line, end_line, content, language) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (chunk_id, workspace_id, file_id, c['start'], c['end'], c['content'], c.get('language'))
+                "INSERT INTO workspace_chunks (id, workspace_id, file_id, start_line, end_line, content, language, vector_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (chunk_id, workspace_id, file_id, c['start'], c['end'], c['content'], c.get('language'), v_id)
             )
             # 2. Store in FTS virtual table
             cursor.execute(
@@ -121,27 +122,54 @@ def add_chunk(workspace_id: str, file_rel_path: str, start_line: int, end_line: 
     }])
 
 def search_chunks(workspace_id: str, query: str, limit: int = 15) -> List[Dict]:
+    """Perform hybrid search (FTS5 + Vector) using RRF."""
+    # 1. Get Keyword Results
+    keyword_results = keyword_search(workspace_id, query, limit=limit*2)
+    
+    # 2. Get Vector Results (if possible)
+    from nimui import embedding_provider, vector_store
+    vector_results = []
+    try:
+        query_emb = embedding_provider.get_single_embedding(query)
+        offsets, distances = vector_store.search_index(workspace_id, query_emb, top_k=limit*2)
+        if offsets:
+            vector_results = _get_chunks_by_vector_ids(workspace_id, offsets)
+    except Exception as e:
+        import logging
+        logging.getLogger("nimui").warning(f"Vector search failed: {e}")
+
+    # 3. Reciprocal Rank Fusion (RRF)
+    # RRF score = sum( 1 / (60 + rank) )
+    scores = {} # (file_id, start_line) -> score
+    id_to_chunk = {}
+    
+    def rrf_merge(results, k=60):
+        for rank, r in enumerate(results):
+            key = (r['rel_path'], r['start_line'])
+            if key not in scores:
+                scores[key] = 0
+                id_to_chunk[key] = r
+            scores[key] += 1.0 / (k + rank + 1)
+
+    rrf_merge(keyword_results)
+    rrf_merge(vector_results)
+
+    # Sort and take top N
+    final_keys = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)[:limit]
+    return [id_to_chunk[k] for k in final_keys]
+
+def keyword_search(workspace_id: str, query: str, limit: int = 15) -> List[Dict]:
     """Search for relevant chunks using FTS5."""
     _init_db()
     
-    # 1. Sanitize: Remove special characters that crash FTS5
+    # Sanitize: Remove special characters that crash FTS5
     import re
-    # Keep alphanumeric, spaces, and some common chars like underscore
     safe_query = re.sub(r'[^\w\s]', ' ', query).strip()
     
-    # 2. Split into words: FTS5 works best when matching keywords
-    # We join words with " OR " or just space for better recall
     keywords = [w for w in safe_query.split() if len(w) > 2]
-    if not keywords:
-        # Fallback for short words if no long ones
-        keywords = safe_query.split()
-    
-    # If no keywords at all, return empty
-    if not keywords:
-        return []
+    if not keywords: keywords = safe_query.split()
+    if not keywords: return []
 
-    # Construction of a query like: "word1* OR word2* OR word3*"
-    # This matches if ANY word is present as a prefix, which is great for "streaming" matching "_stream_nvidia..."
     fts_match = " OR ".join([f"{kw}*" for kw in keywords])
     
     with _get_conn() as conn:
@@ -155,33 +183,43 @@ def search_chunks(workspace_id: str, query: str, limit: int = 15) -> List[Dict]:
                 WHERE cf.workspace_id = ? AND chunks_fts MATCH ?
                 LIMIT ?
             """, (workspace_id, fts_match, limit))
-        except sqlite3.OperationalError as e:
-            logger.warning(f"FTS5 syntax fail for '{fts_match}': {e}. Retrying simple match.")
-            # Fallback for potential syntax error (e.g. if query still has issues)
-            # Try a simple "one of the words" match?
-            simple_q = " OR ".join(keywords[:3])
-            try:
-                cursor.execute("""
-                    SELECT wc.file_id, wc.start_line, wc.end_line, wc.content, f.rel_path, wc.language
-                    FROM workspace_chunks wc
-                    JOIN chunks_fts cf ON wc.id = cf.chunk_id
-                    JOIN workspace_files f ON wc.file_id = f.id
-                    WHERE cf.workspace_id = ? AND chunks_fts MATCH ?
-                    LIMIT ?
-                """, (workspace_id, simple_q, limit))
-            except sqlite3.OperationalError:
-                return []
+        except Exception:
+            return []
         
         rows = cursor.fetchall()
-        # Filter duplicates if JOIN + OR caused any? (Unlikely with LIMIT and JOIN on unique ids)
         return [{
-            "file_id": r[0],
-            "start_line": r[1],
-            "end_line": r[2],
-            "content": r[3],
-            "rel_path": r[4],
-            "language": r[5]
+            "file_id": r[0], "start_line": r[1], "end_line": r[2],
+            "content": r[3], "rel_path": r[4], "language": r[5]
         } for r in rows]
+
+def _get_chunks_by_vector_ids(workspace_id: str, vector_ids: List[int]) -> List[Dict]:
+    """Retrieve chunks from SQLite by their FAISS vector IDs."""
+    if not vector_ids: return []
+    _init_db()
+    
+    # We need to maintain the order of vector_ids (for ranking)
+    placeholders = ",".join(["?"] * len(vector_ids))
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT wc.file_id, wc.start_line, wc.end_line, wc.content, f.rel_path, wc.language, wc.vector_id
+            FROM workspace_chunks wc
+            JOIN workspace_files f ON wc.file_id = f.id
+            WHERE wc.workspace_id = ? AND wc.vector_id IN ({placeholders})
+        """, (workspace_id, *vector_ids))
+        
+        rows = cursor.fetchall()
+        # Sort rows based on the original vector_ids order
+        id_map = {r[6]: r for r in rows}
+        sorted_rows = []
+        for vid in vector_ids:
+            if vid in id_map:
+                sorted_rows.append(id_map[vid])
+                
+        return [{
+            "file_id": r[0], "start_line": r[1], "end_line": r[2],
+            "content": r[3], "rel_path": r[4], "language": r[5]
+        } for r in sorted_rows]
 
 def get_workspace_files(workspace_id: str) -> List[str]:
     """List all file paths in a workspace."""

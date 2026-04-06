@@ -84,6 +84,7 @@ def _init_db():
                 end_line INTEGER,
                 content TEXT NOT NULL,
                 language TEXT,
+                vector_id INTEGER,
                 FOREIGN KEY (workspace_id) REFERENCES workspaces (id) ON DELETE CASCADE,
                 FOREIGN KEY (file_id) REFERENCES workspace_files (id) ON DELETE CASCADE
             )

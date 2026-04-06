@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Optional, Dict
 import pathspec
 from nimui.workspace_provider import add_workspace_file, clear_workspace_files, update_workspace_stats, add_chunks_batch, get_workspace_by_path
+from nimui import embedding_provider, vector_store
 
 # Basic logging setup
 logging.basicConfig(level=logging.INFO)
@@ -40,10 +41,11 @@ class Scanner:
         overlap = ws["chunk_overlap"] if ws else 10
         
         clear_workspace_files(workspace_id)
+        vector_store.delete_index(workspace_id)
         
         count = 0
         all_chunks = []
-        BATCH_SIZE = 500 # chunks per batch flush
+        BATCH_SIZE = 50 # Lower batch size for API embedding limits
         
         for root, dirs, files in os.walk(self.root_path):
             rel_dir = os.path.relpath(root, self.root_path)
@@ -63,27 +65,21 @@ class Scanner:
                 full_path = Path(root) / file
                 try:
                     stats = full_path.stat()
-                    # 1. Add file record
-                    add_workspace_file(
-                        workspace_id,
-                        rel_path,
-                        stats.st_size,
-                        stats.st_mtime
-                    )
-                    
-                    # 2. Collect chunks
+                    add_workspace_file(workspace_id, rel_path, stats.st_size, stats.st_mtime)
                     chunks = self.chunk_file(workspace_id, rel_path, full_path, chunk_size, overlap)
                     all_chunks.extend(chunks)
                     
-                    # 3. Batch flush
                     if len(all_chunks) >= BATCH_SIZE:
-                        add_chunks_batch(workspace_id, all_chunks)
+                        self._flush_chunks(workspace_id, all_chunks)
                         all_chunks = []
                         
                     count += 1
-                except (OSError, PermissionError, UnicodeDecodeError) as e:
+                except Exception as e:
                     logger.warning(f"Skipping {rel_path}: {e}")
                     continue
+
+        if all_chunks:
+            self._flush_chunks(workspace_id, all_chunks)
         
         # Final flush
         if all_chunks:
@@ -137,6 +133,30 @@ class Scanner:
                 break
         
         return file_chunks
+
+    def _flush_chunks(self, workspace_id: str, chunks: List[Dict]):
+        """Generate embeddings and flush chunks to database."""
+        if not chunks:
+            return
+        
+        try:
+            # 1. Generate embeddings for the batch
+            contents = [c['content'] for c in chunks]
+            embeddings = embedding_provider.get_embeddings(contents)
+            
+            # 2. Add to FAISS and get starting vector_id
+            start_id = vector_store.add_to_index(workspace_id, embeddings)
+            
+            # 3. Augment chunks with vector IDs
+            for i, c in enumerate(chunks):
+                c['vector_id'] = start_id + i
+                
+        except Exception as e:
+            logger.error(f"Failed to generate embeddings for batch: {e}")
+            # we proceed anyway, but those chunks won't have vector search support
+        
+        # 4. Save to SQLite (includes vector_ids if successfully generated)
+        add_chunks_batch(workspace_id, chunks)
 
 def scan_repo(workspace_id: str, root_path: str) -> int:
     """Convenience helper to scan a repo."""
